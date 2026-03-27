@@ -23,7 +23,8 @@ export default async function AdminHomePage() {
   if (error) {
     return (
       <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
-        Could not load humor flavors. Apply the Supabase migration and confirm RLS policies.{" "}
+        Could not load humor flavors. Confirm env vars point at the shared project, tables exist as
+        provided by the course, and RLS allows your signed-in user.{" "}
         <span className="font-mono">{error.message}</span>
       </div>
     );
