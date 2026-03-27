@@ -1,5 +1,5 @@
+import { LogoutButton } from "@/components/logout-button";
 import { ThemeToggle } from "@/components/theme-toggle";
-import Link from "next/link";
 
 export default function UnauthorizedPage() {
   return (
@@ -20,12 +20,10 @@ export default function UnauthorizedPage() {
           </code>{" "}
           set to true.
         </p>
-        <Link
-          href="/login"
+        <LogoutButton
+          label="Back to sign in"
           className="mt-6 inline-block rounded-md bg-[var(--accent)] px-4 py-2 text-sm font-medium text-white"
-        >
-          Back to sign in
-        </Link>
+        />
       </div>
     </div>
   );

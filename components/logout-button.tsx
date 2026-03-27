@@ -3,7 +3,16 @@
 import { createClient } from "@/lib/supabase/client";
 import { useRouter } from "next/navigation";
 
-export function LogoutButton() {
+const defaultClassName =
+  "rounded-md border border-[var(--border)] px-3 py-1.5 text-sm hover:bg-[var(--muted-bg)]";
+
+type LogoutButtonProps = {
+  label?: string;
+  className?: string;
+};
+
+/** Signs out and navigates to /login so middleware does not bounce non-admins back to /unauthorized. */
+export function LogoutButton({ label = "Sign out", className = defaultClassName }: LogoutButtonProps) {
   const router = useRouter();
 
   async function logout() {
@@ -17,9 +26,9 @@ export function LogoutButton() {
     <button
       type="button"
       onClick={() => void logout()}
-      className="rounded-md border border-[var(--border)] px-3 py-1.5 text-sm hover:bg-[var(--muted-bg)]"
+      className={className}
     >
-      Sign out
+      {label}
     </button>
   );
 }
