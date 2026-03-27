@@ -30,10 +30,14 @@ export function FlavorRunHistory({ runs }: Props) {
           >
             <div className="flex flex-wrap items-baseline justify-between gap-2 text-xs text-[var(--muted)]">
               <time dateTime={run.created_at}>
-                {new Date(run.created_at).toLocaleString()}
+                {Number.isNaN(Date.parse(run.created_at))
+                  ? run.created_at
+                  : new Date(run.created_at).toLocaleString()}
               </time>
-              {run.test_image_id ? (
-                <span className="font-mono">test_image_id: {run.test_image_id.slice(0, 8)}…</span>
+              {run.test_image_id != null && String(run.test_image_id).length > 0 ? (
+                <span className="font-mono">
+                  test_image_id: {String(run.test_image_id).slice(0, 8)}…
+                </span>
               ) : (
                 <span>Upload / URL</span>
               )}
@@ -43,7 +47,7 @@ export function FlavorRunHistory({ runs }: Props) {
                 {run.image_url}
               </p>
             ) : null}
-            {run.final_captions?.length ? (
+            {Array.isArray(run.final_captions) && run.final_captions.length > 0 ? (
               <ul className="mt-2 list-disc pl-5">
                 {run.final_captions.map((c, i) => (
                   <li key={i}>{c}</li>

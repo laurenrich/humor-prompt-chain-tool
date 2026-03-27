@@ -17,6 +17,11 @@ import { notFound, redirect } from "next/navigation";
 
 type PageProps = { params: Promise<{ id: string }> };
 
+function normalizeFinalCaptions(raw: unknown): string[] {
+  if (Array.isArray(raw) && raw.every((x) => typeof x === "string")) return raw;
+  return [];
+}
+
 async function saveFlavor(formData: FormData) {
   "use server";
   const id = String(formData.get("id") ?? "");
@@ -89,7 +94,7 @@ export default async function FlavorDetailPage(props: PageProps) {
           step_outputs: Array.isArray(r.step_outputs)
             ? (r.step_outputs as HumorFlavorRun["step_outputs"])
             : [],
-          final_captions: r.final_captions ?? [],
+          final_captions: normalizeFinalCaptions(r.final_captions),
         })) as HumorFlavorRun[])
       : [];
 
