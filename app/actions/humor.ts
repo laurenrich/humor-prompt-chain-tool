@@ -12,6 +12,7 @@ import {
 } from "@/lib/humor-step-defaults";
 import { slugifyFlavorName } from "@/lib/slugify";
 import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
 
 async function requireAdmin() {
   const supabase = await createClient();
@@ -28,6 +29,20 @@ async function requireAdmin() {
     profile?.is_superadmin === true || profile?.is_matrix_admin === true;
   if (!ok) throw new Error("Not authorized");
   return { supabase, user };
+}
+
+/** Map Postgres/PostgREST errors to plain Error so the UI shows text, not `{ code: … }`. */
+function throwFlavorSaveError(
+  error: { code?: string; message?: string } | null,
+  verb: "create" | "update",
+): asserts error is null {
+  if (!error) return;
+  if (error.code === "23505") {
+    throw new Error(
+      "That name matches another flavor already. Use a different name (or edit the existing flavor).",
+    );
+  }
+  throw new Error(error.message || (verb === "create" ? "Could not create flavor." : "Could not update flavor."));
 }
 
 export async function createHumorFlavor(data: {
@@ -49,7 +64,7 @@ export async function createHumorFlavor(data: {
     })
     .select("id")
     .single();
-  if (error) throw error;
+  throwFlavorSaveError(error, "create");
   revalidatePath("/admin");
   return String(row!.id);
 }
@@ -69,7 +84,7 @@ export async function updateHumorFlavor(
       modified_datetime_utc: new Date().toISOString(),
     })
     .eq("id", id);
-  if (error) throw error;
+  throwFlavorSaveError(error, "update");
   revalidatePath("/admin");
   revalidatePath(`/admin/flavors/${id}`);
 }
@@ -79,6 +94,14 @@ export async function deleteHumorFlavor(id: string) {
   const { error } = await supabase.from("humor_flavors").delete().eq("id", id);
   if (error) throw error;
   revalidatePath("/admin");
+}
+
+/** Form action from admin list: delete flavor then return to `/admin`. */
+export async function deleteHumorFlavorFromListForm(formData: FormData) {
+  const id = String(formData.get("id") ?? "").trim();
+  if (!id) return;
+  await deleteHumorFlavor(id);
+  redirect("/admin");
 }
 
 export async function createHumorFlavorStep(

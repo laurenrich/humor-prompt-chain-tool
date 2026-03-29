@@ -39,16 +39,24 @@ type Props = {
   initialSteps: HumorFlavorStep[];
 };
 
+function stepHeadline(prompt: string | null | undefined, order: number): string {
+  const raw = (prompt ?? "").trim().split(/\n/)[0] ?? "";
+  if (!raw) return `Step ${order}`;
+  const one = raw.length > 52 ? `${raw.slice(0, 49)}…` : raw;
+  return one.toUpperCase();
+}
+
 type StepRowProps = {
   step: HumorFlavorStep;
   flavorId: string;
   onSaved: () => void;
   dragHandle: ReactNode;
   style?: CSSProperties;
+  isLast: boolean;
 };
 
 const FlavorStepRow = forwardRef<HTMLLIElement, StepRowProps>(function FlavorStepRow(
-  { step, flavorId, onSaved, dragHandle, style },
+  { step, flavorId, onSaved, dragHandle, style, isLast },
   ref,
 ) {
   const [editing, setEditing] = useState(false);
@@ -93,71 +101,88 @@ const FlavorStepRow = forwardRef<HTMLLIElement, StepRowProps>(function FlavorSte
     }
   }
 
+  const headline = stepHeadline(step.llm_user_prompt, step.order_by);
+
   return (
-    <li
-      ref={ref}
-      style={style}
-      className="rounded-lg border border-[var(--border)] bg-[var(--card)] p-3 shadow-sm"
-    >
-      <div className="flex items-start gap-2">
-        {dragHandle}
-        <div className="min-w-0 flex-1">
-          <div className="mb-1 flex flex-wrap items-center gap-2 text-xs text-[var(--muted)]">
-            <span className="rounded bg-[var(--muted-bg)] px-1.5 py-0.5 font-medium text-[var(--foreground)]">
-              Step {step.order_by}
-            </span>
-            <span>
-              Almost Crackd substitutes placeholders in your prompts: use{" "}
-              <code className="rounded bg-[var(--muted-bg)] px-1">{"{{previous}}"}</code> for the
-              immediate prior step’s output (empty on step 1). Reference flavors often use{" "}
-              <code className="rounded bg-[var(--muted-bg)] px-1">{"${step1Output}"}</code>,{" "}
-              <code className="rounded bg-[var(--muted-bg)] px-1">{"${step2Output}"}</code>, etc., to
-              pull specific earlier steps when a later step needs more than one.
-            </span>
-          </div>
-          {editing ? (
-            <div className="space-y-2">
-              <label className="block text-xs text-[var(--muted)]">User prompt</label>
-              <textarea
-                value={text}
-                onChange={(e) => setText(e.target.value)}
-                rows={5}
-                className="w-full rounded-md border border-[var(--border)] bg-[var(--background)] p-2 font-mono text-sm"
-              />
-              <label className="block text-xs text-[var(--muted)]">
-                System prompt (required by API; leave blank to use default)
-              </label>
-              <textarea
-                value={systemText}
-                onChange={(e) => setSystemText(e.target.value)}
-                rows={2}
-                className="w-full rounded-md border border-[var(--border)] bg-[var(--background)] p-2 font-mono text-sm"
-              />
+    <li ref={ref} style={style} className="relative flex gap-4 pb-10 last:pb-0">
+      <div className="flex shrink-0 flex-col items-center">
+        <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[var(--accent)] text-sm font-bold text-white shadow-sm">
+          {step.order_by}
+        </div>
+        {!isLast ? (
+          <div
+            className="mt-2 w-px flex-1 min-h-[1.5rem] bg-[var(--border)]"
+            aria-hidden
+          />
+        ) : null}
+      </div>
+      <div className="min-w-0 flex-1 rounded-xl border border-[var(--border)] bg-[var(--card)] p-4 shadow-card">
+        <div className="mb-3 flex flex-wrap items-start justify-between gap-2">
+          <h3 className="text-xs font-semibold tracking-wide text-[var(--accent)]">{headline}</h3>
+          <div className="flex shrink-0 items-center gap-1">{dragHandle}</div>
+        </div>
+        <p className="mb-3 text-[10px] leading-relaxed text-[var(--muted)]">
+          Placeholders:{" "}
+          <code className="rounded bg-[var(--muted-bg)] px-1">{"{{previous}}"}</code>,{" "}
+          <code className="rounded bg-[var(--muted-bg)] px-1">{"${step1Output}"}</code>, …
+        </p>
+        {editing ? (
+            <div className="space-y-3">
+              <div>
+                <label className="mb-1 block text-[10px] font-medium uppercase tracking-wide text-[var(--muted)]">
+                  User prompt
+                </label>
+                <textarea
+                  value={text}
+                  onChange={(e) => setText(e.target.value)}
+                  rows={5}
+                  className="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] p-2 font-mono text-sm"
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-[10px] font-medium uppercase tracking-wide text-[var(--muted)]">
+                  System prompt
+                </label>
+                <textarea
+                  value={systemText}
+                  onChange={(e) => setSystemText(e.target.value)}
+                  rows={3}
+                  className="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] p-2 font-mono text-sm"
+                  placeholder="Required by API; leave blank to use default"
+                />
+              </div>
             </div>
           ) : (
             <>
-              <pre className="whitespace-pre-wrap font-mono text-sm text-[var(--foreground)]">
-                {step.llm_user_prompt ?? ""}
-              </pre>
-              {step.llm_system_prompt ? (
-                <p className="mt-2 text-xs text-[var(--muted)]">
-                  <span className="font-medium text-[var(--foreground)]">System:</span>{" "}
-                  {step.llm_system_prompt}
+              <div>
+                <p className="mb-1 text-[10px] font-medium uppercase tracking-wide text-[var(--muted)]">
+                  User prompt
                 </p>
+                <pre className="whitespace-pre-wrap font-mono text-sm text-[var(--foreground)]">
+                  {step.llm_user_prompt ?? ""}
+                </pre>
+              </div>
+              {step.llm_system_prompt ? (
+                <div className="mt-3 border-t border-[var(--border)] pt-3">
+                  <p className="mb-1 text-[10px] font-medium uppercase tracking-wide text-[var(--muted)]">
+                    System prompt
+                  </p>
+                  <p className="text-sm text-[var(--muted)]">{step.llm_system_prompt}</p>
+                </div>
               ) : null}
             </>
           )}
           {error ? (
             <p className="mt-2 text-sm text-red-600 dark:text-red-400">{error}</p>
           ) : null}
-          <div className="mt-2 flex flex-wrap gap-2">
+          <div className="mt-4 flex flex-wrap gap-2">
             {editing ? (
               <>
                 <button
                   type="button"
                   disabled={busy}
                   onClick={() => void save()}
-                  className="rounded-md bg-[var(--accent)] px-3 py-1.5 text-sm text-white"
+                  className="rounded-lg bg-[var(--accent)] px-3 py-1.5 text-sm text-white"
                 >
                   Save
                 </button>
@@ -169,7 +194,7 @@ const FlavorStepRow = forwardRef<HTMLLIElement, StepRowProps>(function FlavorSte
                     setSystemText(step.llm_system_prompt ?? "");
                     setEditing(false);
                   }}
-                  className="rounded-md border border-[var(--border)] px-3 py-1.5 text-sm"
+                  className="rounded-lg border border-[var(--border)] px-3 py-1.5 text-sm"
                 >
                   Cancel
                 </button>
@@ -179,21 +204,21 @@ const FlavorStepRow = forwardRef<HTMLLIElement, StepRowProps>(function FlavorSte
                 <button
                   type="button"
                   onClick={() => setEditing(true)}
-                  className="rounded-md border border-[var(--border)] px-3 py-1.5 text-sm"
+                  className="rounded-lg border border-[var(--border)] px-3 py-1.5 text-sm"
+                  style={{ background: "var(--amber-bg)", color: "var(--amber)" }}
                 >
                   Edit
                 </button>
                 <button
                   type="button"
                   onClick={() => void remove()}
-                  className="rounded-md border border-red-300 px-3 py-1.5 text-sm text-red-700 dark:border-red-800 dark:text-red-300"
+                  className="rounded-lg border border-red-300 px-3 py-1.5 text-sm text-red-700 dark:border-red-800 dark:text-red-300"
                 >
                   Delete
                 </button>
               </>
             )}
           </div>
-        </div>
       </div>
     </li>
   );
@@ -203,10 +228,12 @@ function SortableRow({
   step,
   flavorId,
   onSaved,
+  isLast,
 }: {
   step: HumorFlavorStep;
   flavorId: string;
   onSaved: () => void;
+  isLast: boolean;
 }) {
   const {
     attributes,
@@ -230,6 +257,7 @@ function SortableRow({
       step={step}
       flavorId={flavorId}
       onSaved={onSaved}
+      isLast={isLast}
       dragHandle={
         <button
           type="button"
@@ -249,16 +277,19 @@ function StaticRow({
   step,
   flavorId,
   onSaved,
+  isLast,
 }: {
   step: HumorFlavorStep;
   flavorId: string;
   onSaved: () => void;
+  isLast: boolean;
 }) {
   return (
     <FlavorStepRow
       step={step}
       flavorId={flavorId}
       onSaved={onSaved}
+      isLast={isLast}
       dragHandle={
         <span
           className="mt-1 inline-block rounded px-1 text-[var(--muted)] opacity-60"
@@ -340,8 +371,8 @@ export function FlavorSteps({ flavorId, initialSteps }: Props) {
   }
 
   const newStepForm = (
-    <div className="rounded-lg border border-dashed border-[var(--border)] p-4">
-      <h3 className="mb-2 text-sm font-medium">New step</h3>
+    <div className="rounded-xl border-2 border-dashed border-[var(--border)] bg-[var(--muted-bg)]/40 p-5">
+      <h3 className="mb-2 text-sm font-medium text-[var(--foreground)]">+ New step</h3>
       <label className="mb-1 block text-xs text-[var(--muted)]">User prompt</label>
       <textarea
         value={newPrompt}
@@ -379,12 +410,13 @@ export function FlavorSteps({ flavorId, initialSteps }: Props) {
         test.
       </p>
       {!dndReady ? (
-        <ul className="space-y-3">
-          {steps.map((step) => (
+        <ul className="list-none p-0">
+          {steps.map((step, i) => (
             <StaticRow
               key={step.id}
               step={step}
               flavorId={flavorId}
+              isLast={i === steps.length - 1}
               onSaved={() => router.refresh()}
             />
           ))}
@@ -399,12 +431,13 @@ export function FlavorSteps({ flavorId, initialSteps }: Props) {
             items={steps.map((s) => String(s.id))}
             strategy={verticalListSortingStrategy}
           >
-            <ul className="space-y-3">
-              {steps.map((step) => (
+            <ul className="list-none p-0">
+              {steps.map((step, i) => (
                 <SortableRow
                   key={step.id}
                   step={step}
                   flavorId={flavorId}
+                  isLast={i === steps.length - 1}
                   onSaved={() => router.refresh()}
                 />
               ))}

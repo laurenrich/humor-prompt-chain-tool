@@ -1,13 +1,20 @@
 @import "tailwindcss";
 
 :root {
-  --background: #fafafa;
+  --background: #f4f4f5;
   --foreground: #0a0a0a;
   --card: #ffffff;
   --border: #e5e5e5;
   --muted: #737373;
   --muted-bg: #f4f4f5;
   --accent: #2563eb;
+  --success: #059669;
+  --success-bg: #ecfdf5;
+  --violet: #7c3aed;
+  --violet-bg: #f5f3ff;
+  --amber: #d97706;
+  --amber-bg: #fffbeb;
+  --shadow-card: 0 1px 3px rgb(0 0 0 / 0.06), 0 1px 2px rgb(0 0 0 / 0.04);
 }
 
 .dark {
@@ -18,6 +25,13 @@
   --muted: #a3a3a3;
   --muted-bg: #262626;
   --accent: #60a5fa;
+  --success: #34d399;
+  --success-bg: #022c22;
+  --violet: #a78bfa;
+  --violet-bg: #2e1065;
+  --amber: #fbbf24;
+  --amber-bg: #451a03;
+  --shadow-card: 0 1px 3px rgb(0 0 0 / 0.4);
 }
 
 @theme inline {
@@ -29,4 +43,8 @@
 
 body {
   font-family: var(--font-geist-sans), system-ui, sans-serif;
+}
+
+.shadow-card {
+  box-shadow: var(--shadow-card);
 }

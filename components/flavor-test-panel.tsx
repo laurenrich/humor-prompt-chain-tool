@@ -4,6 +4,7 @@ import {
   runFlavorOnTestImage,
   runFlavorOnUploadedImage,
 } from "@/app/actions/humor";
+import type { HumorFlavorPipelineResult } from "@/lib/almostcrackd";
 import type { HumorTestImage } from "@/types/humor";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
@@ -20,7 +21,7 @@ export function FlavorTestPanel({ flavorId, testImages = [] }: Props) {
   const [previewBlobUrl, setPreviewBlobUrl] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [last, setLast] = useState<string[] | null>(null);
+  const [lastResult, setLastResult] = useState<HumorFlavorPipelineResult | null>(null);
   const [testImageId, setTestImageId] = useState<string>("");
 
   useEffect(() => {
@@ -37,12 +38,12 @@ export function FlavorTestPanel({ flavorId, testImages = [] }: Props) {
     if (!file) return;
     setBusy(true);
     setError(null);
-    setLast(null);
+    setLastResult(null);
     try {
       const fd = new FormData();
       fd.append("image", file);
       const res = await runFlavorOnUploadedImage(flavorId, fd);
-      setLast(res.finalCaptions);
+      setLastResult(res);
       router.refresh();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Run failed");
@@ -55,10 +56,10 @@ export function FlavorTestPanel({ flavorId, testImages = [] }: Props) {
     if (!testImageId) return;
     setBusy(true);
     setError(null);
-    setLast(null);
+    setLastResult(null);
     try {
       const res = await runFlavorOnTestImage(flavorId, testImageId);
-      setLast(res.finalCaptions);
+      setLastResult(res);
       router.refresh();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Run failed");
@@ -68,28 +69,28 @@ export function FlavorTestPanel({ flavorId, testImages = [] }: Props) {
   }
 
   return (
-    <div className="space-y-4 rounded-lg border border-[var(--border)] bg-[var(--card)] p-4">
-      <h2 className="text-lg font-semibold">Test this flavor</h2>
-      <p className="text-sm text-[var(--muted)]">
-        Uses Almost Crackd with this flavor’s id. Placeholders: {"{{previous}}"},{" "}
-        {"${step1Output}"}, etc. Runs are saved to caption history when{" "}
-        <code className="rounded bg-[var(--muted-bg)] px-1 text-xs">humor_flavor_runs</code> exists.
-        Often 30–90s.
-      </p>
+    <div className="space-y-5 rounded-xl border border-[var(--border)] bg-[var(--card)] p-5 shadow-card">
+      <div>
+        <h2 className="text-xs font-medium uppercase tracking-wide text-[var(--muted)]">Test this flavor</h2>
+        <p className="mt-2 text-sm text-[var(--muted)]">
+          Runs use this page’s <code className="text-xs">humorFlavorId</code> and your session. Wording can vary between
+          runs; the flavor id does not.
+        </p>
+      </div>
 
       {testImages.length > 0 ? (
-        <div className="rounded-md border border-[var(--border)] bg-[var(--background)] p-3">
-          <h3 className="text-sm font-medium">Image test set</h3>
+        <div className="rounded-xl border border-[var(--border)] bg-[var(--background)] p-4">
+          <h3 className="text-sm font-medium text-[var(--foreground)]">Image test set</h3>
           <p className="mt-1 text-xs text-[var(--muted)]">
-            Week 8: generate captions from a curated URL in <code className="font-mono">humor_test_images</code>.
+            Curated URLs from <code className="font-mono text-xs">humor_test_images</code>.
           </p>
-          <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-end">
-            <label className="flex min-w-0 flex-1 flex-col gap-1 text-sm">
+          <div className="mt-3 flex flex-col gap-3">
+            <label className="flex flex-col gap-1 text-sm">
               <span className="text-[var(--muted)]">Test image</span>
               <select
                 value={testImageId}
                 onChange={(e) => setTestImageId(e.target.value)}
-                className="h-10 rounded-md border border-[var(--border)] bg-[var(--background)] px-2 text-sm"
+                className="h-11 rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 text-sm"
               >
                 <option value="">Select…</option>
                 {testImages.map((t) => (
@@ -103,57 +104,75 @@ export function FlavorTestPanel({ flavorId, testImages = [] }: Props) {
               type="button"
               disabled={busy || !testImageId}
               onClick={() => void runTestSet()}
-              className="h-10 shrink-0 rounded-md bg-[var(--accent)] px-4 text-sm font-medium text-white disabled:opacity-50"
+              className="h-12 w-full rounded-xl text-sm font-semibold text-white shadow-sm disabled:opacity-50"
+              style={{ background: "var(--success)" }}
             >
-              {busy ? "Running…" : "Generate from test image"}
+              {busy ? "Running…" : "Generate captions"}
             </button>
           </div>
         </div>
       ) : null}
 
-      <div className="rounded-md border border-[var(--border)] bg-[var(--background)] p-3">
-        <h3 className="text-sm font-medium">Upload an image</h3>
-        <div className="mt-2 flex flex-col gap-4 sm:flex-row sm:items-end">
-          <label className="flex flex-1 flex-col gap-1 text-sm">
-            <span className="text-[var(--muted)]">Image file</span>
-            <input
-              type="file"
-              accept="image/*"
-              onChange={(e) => {
-                const f = e.target.files?.[0] ?? null;
-                setFile(f);
-              }}
-              className="text-sm file:mr-2 file:rounded file:border-0 file:bg-[var(--accent)] file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-white"
-            />
-          </label>
-          <button
-            type="button"
-            disabled={busy || !file}
-            onClick={() => void runUpload()}
-            className="h-10 rounded-md bg-[var(--accent)] px-4 text-sm font-medium text-white disabled:opacity-50"
-          >
-            {busy ? "Running…" : "Generate from upload"}
-          </button>
-        </div>
+      <div className="rounded-xl border border-[var(--border)] bg-[var(--background)] p-4">
+        <h3 className="text-sm font-medium text-[var(--foreground)]">Upload an image</h3>
+        <label className="mt-3 flex flex-col gap-2 text-sm">
+          <span className="text-[var(--muted)]">Image file</span>
+          <input
+            type="file"
+            accept="image/*"
+            onChange={(e) => {
+              const f = e.target.files?.[0] ?? null;
+              setFile(f);
+            }}
+            className="text-sm file:mr-3 file:rounded-lg file:border-0 file:bg-[var(--accent)] file:px-4 file:py-2 file:text-sm file:font-medium file:text-white"
+          />
+        </label>
+        <button
+          type="button"
+          disabled={busy || !file}
+          onClick={() => void runUpload()}
+          className="mt-4 flex h-12 w-full items-center justify-center gap-2 rounded-xl text-base font-semibold text-white shadow-sm disabled:opacity-50"
+          style={{ background: "var(--success)" }}
+        >
+          <span aria-hidden>🚀</span>
+          {busy ? "Running…" : "Generate captions"}
+        </button>
       </div>
 
       {previewBlobUrl ? (
-        <div className="overflow-hidden rounded-md border border-[var(--border)]">
+        <div className="overflow-hidden rounded-xl border border-[var(--border)] shadow-sm">
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={previewBlobUrl} alt="" className="max-h-48 w-full object-cover" />
+          <img src={previewBlobUrl} alt="" className="max-h-56 w-full object-cover" />
         </div>
       ) : null}
       {error ? (
         <p className="text-sm text-red-600 dark:text-red-400">{error}</p>
       ) : null}
-      {last ? (
-        <div className="text-sm">
-          <h3 className="font-medium">Output</h3>
-          <ul className="mt-2 list-disc pl-5">
-            {last.map((c, i) => (
-              <li key={i}>{c}</li>
+      {lastResult ? (
+        <div className="rounded-xl border border-[var(--border)] bg-[var(--background)] p-4 text-sm">
+          <div className="flex items-center justify-between gap-2">
+            <h3 className="font-semibold text-[var(--foreground)]">Generated captions</h3>
+            <span
+              className="rounded-full px-2 py-0.5 text-xs font-medium"
+              style={{ color: "var(--success)", background: "var(--success-bg)" }}
+            >
+              {lastResult.finalCaptions.length}{" "}
+              {lastResult.finalCaptions.length === 1 ? "line" : "lines"}
+            </span>
+          </div>
+          <ol className="mt-4 space-y-3">
+            {lastResult.finalCaptions.map((c, i) => (
+              <li key={i} className="flex gap-3">
+                <span
+                  className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-sm font-semibold text-white"
+                  style={{ background: "var(--success)" }}
+                >
+                  {i + 1}
+                </span>
+                <span className="min-w-0 flex-1 pt-0.5 leading-relaxed text-[var(--foreground)]">{c}</span>
+              </li>
             ))}
-          </ul>
+          </ol>
         </div>
       ) : null}
     </div>

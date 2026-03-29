@@ -14,7 +14,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Humor prompt chain tool",
+  title: "Humor Flavors",
   description: "Manage humor flavors, steps, and caption runs.",
 };
 

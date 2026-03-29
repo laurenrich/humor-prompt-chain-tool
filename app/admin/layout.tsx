@@ -13,7 +13,7 @@ export default function AdminLayout({
         <div className="mx-auto flex max-w-5xl flex-wrap items-center justify-between gap-3 px-4 py-3">
           <div className="flex flex-wrap items-center gap-4">
             <Link href="/admin" className="font-semibold tracking-tight">
-              Humor prompt chains
+              Humor Flavors
             </Link>
             <nav className="flex flex-wrap gap-3 text-sm text-[var(--muted)]">
               <Link className="hover:text-[var(--foreground)]" href="/admin">

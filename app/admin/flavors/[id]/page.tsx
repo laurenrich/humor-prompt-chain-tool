@@ -2,25 +2,14 @@ import {
   deleteHumorFlavor,
   updateHumorFlavor,
 } from "@/app/actions/humor";
-import { FlavorRunHistory } from "@/components/flavor-run-history";
 import { FlavorSteps } from "@/components/flavor-steps";
 import { FlavorTestPanel } from "@/components/flavor-test-panel";
 import { createClient } from "@/lib/supabase/server";
-import type {
-  HumorFlavor,
-  HumorFlavorRun,
-  HumorFlavorStep,
-  HumorTestImage,
-} from "@/types/humor";
+import type { HumorFlavor, HumorFlavorStep, HumorTestImage } from "@/types/humor";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 
 type PageProps = { params: Promise<{ id: string }> };
-
-function normalizeFinalCaptions(raw: unknown): string[] {
-  if (Array.isArray(raw) && raw.every((x) => typeof x === "string")) return raw;
-  return [];
-}
 
 async function saveFlavor(formData: FormData) {
   "use server";
@@ -78,37 +67,34 @@ export default async function FlavorDetailPage(props: PageProps) {
 
   const testImages = (!te && testImageRows ? testImageRows : []) as HumorTestImage[];
 
-  const { data: runRows, error: runErr } = await supabase
-    .from("humor_flavor_runs")
-    .select(
-      "id, flavor_id, test_image_id, image_url, step_outputs, final_captions, created_at",
-    )
-    .eq("flavor_id", id)
-    .order("created_at", { ascending: false })
-    .limit(20);
-
-  const captionRuns: HumorFlavorRun[] =
-    !runErr && runRows
-      ? (runRows.map((r) => ({
-          ...r,
-          step_outputs: Array.isArray(r.step_outputs)
-            ? (r.step_outputs as HumorFlavorRun["step_outputs"])
-            : [],
-          final_captions: normalizeFinalCaptions(r.final_captions),
-        })) as HumorFlavorRun[])
-      : [];
-
   return (
     <div className="space-y-10">
-      <div>
-        <Link href="/admin" className="text-sm text-[var(--muted)] hover:text-[var(--foreground)]">
-          ← All flavors
-        </Link>
-        <h1 className="mt-2 text-2xl font-semibold tracking-tight">{f.slug}</h1>
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <Link href="/admin" className="text-sm text-[var(--muted)] hover:text-[var(--foreground)]">
+            ← All flavors
+          </Link>
+          <h1 className="mt-2 text-3xl font-semibold tracking-tight text-[var(--foreground)]">{f.slug}</h1>
+          <p className="mt-1 text-sm text-[var(--muted)]">
+            {stepRows.length} {stepRows.length === 1 ? "step" : "steps"} · Drag to reorder in the pipeline below
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Link
+            href="#test"
+            className="inline-flex items-center rounded-full px-4 py-2 text-sm font-medium text-[var(--success)] shadow-sm"
+            style={{ background: "var(--success-bg)" }}
+          >
+            Test
+          </Link>
+        </div>
       </div>
 
-      <section className="rounded-lg border border-[var(--border)] bg-[var(--card)] p-4">
-        <h2 className="text-sm font-medium">Flavor details</h2>
+      <section
+        id="details"
+        className="scroll-mt-24 rounded-xl border border-[var(--border)] bg-[var(--card)] p-5 shadow-card"
+      >
+        <h2 className="text-xs font-medium uppercase tracking-wide text-[var(--muted)]">Flavor details</h2>
         <form action={saveFlavor} className="mt-3 space-y-3">
           <input type="hidden" name="id" value={f.id} />
           <label className="flex flex-col gap-1 text-sm">
@@ -149,14 +135,14 @@ export default async function FlavorDetailPage(props: PageProps) {
         </form>
       </section>
 
-      <section>
-        <h2 className="mb-3 text-lg font-semibold">Steps</h2>
+      <section id="steps" className="scroll-mt-24 space-y-4">
+        <h2 className="text-xs font-medium uppercase tracking-wide text-[var(--muted)]">Pipeline steps</h2>
         <FlavorSteps flavorId={String(f.id)} initialSteps={stepRows} />
       </section>
 
-      <FlavorTestPanel flavorId={String(f.id)} testImages={testImages} />
-
-      <FlavorRunHistory runs={captionRuns} />
+      <section id="test" className="scroll-mt-24">
+        <FlavorTestPanel flavorId={String(f.id)} testImages={testImages} />
+      </section>
     </div>
   );
 }

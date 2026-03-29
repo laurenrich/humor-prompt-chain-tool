@@ -1,11 +1,14 @@
 /**
  * Almost Crackd pipeline (api.almostcrackd.ai).
  *
+ * Humor flavor: this client does not POST step prompts. It sends `humorFlavorId` (+ `imageId`); the remote service loads
+ * and runs the chain for that id (per course design — same DB or synced copy as Supabase `humor_flavor_steps`).
+ *
  * File upload (JWT = Supabase session access token on every Almost Crackd call except PUT):
  * 1. POST /pipeline/generate-presigned-url  Body: { contentType }  → { presignedUrl, cdnUrl }
  * 2. PUT <presignedUrl> (S3, not api.almostcrackd.ai)  Body: raw bytes, Content-Type must match (1)
  * 3. POST /pipeline/upload-image-from-url  Body: { imageUrl: cdnUrl, isCommonUse: false }  → { imageId, now }
- * 4. POST /pipeline/generate-captions  Body: { imageId, humorFlavorId }
+ * 4. POST /pipeline/generate-captions  Body: { imageId, humorFlavorId } (and query variants; see runGenerateCaptionsPhase)
  *
  */
 
@@ -99,6 +102,19 @@ function readStringId(obj: Record<string, unknown>, keys: string[]): string | un
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Course reference clients send `humorFlavorId` as a JSON **number** for int8 ids (`parseInt(id, 10)`).
+ * Some APIs ignore or mis-match string `"42"` vs number `42`.
+ */
+function humorFlavorIdForJsonBody(id: string): string | number {
+  const t = id.trim();
+  if (/^\d+$/.test(t)) {
+    const n = Number(t);
+    if (Number.isSafeInteger(n)) return n;
+  }
+  return t;
 }
 
 /** Pull presigned PUT URL + optional public CDN URL from generate-presigned-url JSON. */
@@ -318,26 +334,31 @@ async function runGenerateCaptionsPhase(input: {
   } as const;
 
   /**
-   * Try **query + `{ imageId }` body first** — often works when combined JSON body 500s, so we avoid
-   * an extra slow failure before the working shape. Assignment minimal `{ imageId }` only is last.
+   * Only request shapes that include `humorFlavorId`. A legacy fallback used `{ imageId }` alone; that
+   * can return HTTP 200 with a **default** caption pipeline, so captions ignore your Supabase steps and
+   * look “random” (meme / generic) compared to a friend’s app that always sends the flavor id.
    */
+  const flavorForBody = humorFlavorIdForJsonBody(humorFlavorId);
   const variants: { label: string; url: string; body: string }[] = [
     {
-      label: "imageId + humorFlavorId query",
+      label: "imageId + humorFlavorId JSON body (course shape)",
+      url: `${base}/pipeline/generate-captions`,
+      body: JSON.stringify({ imageId, humorFlavorId: flavorForBody }),
+    },
+    {
+      label: "imageId + humorFlavorId query string",
       url: `${base}/pipeline/generate-captions?humorFlavorId=${encodeURIComponent(humorFlavorId)}`,
       body: JSON.stringify({ imageId }),
     },
-    {
-      label: "imageId+humorFlavorId (JSON body)",
-      url: `${base}/pipeline/generate-captions`,
-      body: JSON.stringify({ imageId, humorFlavorId }),
-    },
-    {
-      label: "imageId only (assignment minimal body)",
+  ];
+
+  if (process.env.ALMOSTCRACKD_ALLOW_IMAGE_ID_ONLY_CAPTIONS === "true") {
+    variants.push({
+      label: "imageId only (no flavor — opt-in only)",
       url: `${base}/pipeline/generate-captions`,
       body: JSON.stringify({ imageId }),
-    },
-  ];
+    });
+  }
 
   let lastStatus = 0;
   let lastRaw = "";
@@ -384,7 +405,7 @@ async function runGenerateCaptionsPhase(input: {
   const crackdBug =
     /not valid JSON|The image/i.test(lastRaw) && lastStatus === 500;
   const tail = crackdBug
-    ? "\n\n— Almost Crackd returned this 500 (not your app). Tried: query+imageId → combined body → imageId-only."
+    ? "\n\n— Almost Crackd returned this 500 (not your app). Tried: query humorFlavorId + imageId body, then JSON body with both ids."
     : "";
 
   throw new Error(

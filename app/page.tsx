@@ -29,9 +29,9 @@ export default async function Home() {
         <ThemeToggle />
       </div>
       <div className="max-w-lg text-center">
-        <h1 className="text-3xl font-semibold tracking-tight">Humor prompt chain tool</h1>
+        <h1 className="text-3xl font-semibold tracking-tight">Humor Flavors</h1>
         <p className="mt-3 text-[var(--muted)]">
-          Build humor flavors as ordered prompt chains and try them on an image URL.
+          Build prompt chains for image captions — sign in to manage flavors and steps.
         </p>
         <Link
           href="/login"
