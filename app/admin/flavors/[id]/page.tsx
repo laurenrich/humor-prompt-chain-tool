@@ -1,7 +1,5 @@
-import {
-  deleteHumorFlavor,
-  updateHumorFlavor,
-} from "@/app/actions/humor";
+import { deleteHumorFlavor, updateHumorFlavor } from "@/app/actions/humor";
+import { DuplicateFlavorForm } from "@/components/duplicate-flavor-form";
 import { FlavorSteps } from "@/components/flavor-steps";
 import { FlavorTestPanel } from "@/components/flavor-test-panel";
 import { createClient } from "@/lib/supabase/server";
@@ -124,6 +122,10 @@ export default async function FlavorDetailPage(props: PageProps) {
             </button>
           </div>
         </form>
+        <DuplicateFlavorForm
+          sourceFlavorId={String(f.id)}
+          placeholder={`${f.slug}-copy`}
+        />
         <form action={removeFlavor} className="mt-4 border-t border-[var(--border)] pt-4">
           <input type="hidden" name="id" value={f.id} />
           <button

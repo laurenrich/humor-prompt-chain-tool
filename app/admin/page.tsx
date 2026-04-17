@@ -136,6 +136,12 @@ export default async function AdminHomePage() {
                       >
                         Edit
                       </Link>
+                      <Link
+                        href={`${base}#duplicate`}
+                        className="inline-flex items-center rounded-full border border-[var(--border)] bg-[var(--background)] px-3 py-1.5 text-xs font-medium text-[var(--foreground)] hover:bg-[var(--muted-bg)]"
+                      >
+                        Duplicate
+                      </Link>
                       <DeleteFlavorButton flavorId={fid} />
                     </div>
                   </div>

@@ -104,6 +104,35 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/** CloudFront returns HTML pages for 502/503/504; don’t dump multi‑KB into the UI. */
+function isCloudFrontOrGatewayHtml(status: number, body: string): boolean {
+  if (![502, 503, 504].includes(status)) return false;
+  const head = body.slice(0, 2500).toLowerCase();
+  return (
+    head.includes("<!doctype html") ||
+    head.includes("cloudfront") ||
+    head.includes("could not be satisfied") ||
+    head.includes("gateway timeout")
+  );
+}
+
+/** Short message for errors after generate-captions retries exhaust. */
+function formatGenerateCaptionsFailure(status: number, raw: string): string {
+  if (isCloudFrontOrGatewayHtml(status, raw)) {
+    return (
+      `Almost Crackd’s edge (CloudFront) returned HTTP ${status} — the origin didn’t respond in time or wasn’t reachable. ` +
+      `Often transient: try again in a minute. Busy periods and long multi-step flavors increase timeouts. ` +
+      `(Set ALMOSTCRACKD_CAPTION_ATTEMPTS_PER_VARIANT=1 in .env.local to fail fast while debugging.)`
+    );
+  }
+  const t = raw.trim();
+  if (t.startsWith("<!DOCTYPE") || t.startsWith("<html")) {
+    const one = t.replace(/\s+/g, " ").slice(0, 180);
+    return one.length < t.length ? `${one}…` : one;
+  }
+  return t.length > 700 ? `${t.slice(0, 700)}…` : t;
+}
+
 /**
  * Course reference clients send `humorFlavorId` as a JSON **number** for int8 ids (`parseInt(id, 10)`).
  * Some APIs ignore or mis-match string `"42"` vs number `42`.
@@ -115,6 +144,51 @@ function humorFlavorIdForJsonBody(id: string): string | number {
     if (Number.isSafeInteger(n)) return n;
   }
   return t;
+}
+
+/** Request shapes for POST /pipeline/generate-captions (order = try sequence until first HTTP 2xx). */
+function buildGenerateCaptionsVariants(
+  base: string,
+  imageId: string,
+  humorFlavorId: string,
+): { label: string; url: string; body: string }[] {
+  const flavorForBody = humorFlavorIdForJsonBody(humorFlavorId);
+  const variants: { label: string; url: string; body: string }[] = [];
+
+  /** Many deployments match DB ids from JSON as strings; try before numeric. */
+  variants.push({
+    label: "JSON body (humorFlavorId string)",
+    url: `${base}/pipeline/generate-captions`,
+    body: JSON.stringify({ imageId, humorFlavorId: humorFlavorId }),
+  });
+  if (typeof flavorForBody === "number") {
+    variants.push({
+      label: "JSON body (humorFlavorId number)",
+      url: `${base}/pipeline/generate-captions`,
+      body: JSON.stringify({ imageId, humorFlavorId: flavorForBody }),
+    });
+  }
+
+  variants.push({
+    label: "query + JSON body (id string)",
+    url: `${base}/pipeline/generate-captions?humorFlavorId=${encodeURIComponent(humorFlavorId)}`,
+    body: JSON.stringify({ imageId, humorFlavorId: humorFlavorId }),
+  });
+  if (typeof flavorForBody === "number") {
+    variants.push({
+      label: "query + JSON body (id number)",
+      url: `${base}/pipeline/generate-captions?humorFlavorId=${encodeURIComponent(humorFlavorId)}`,
+      body: JSON.stringify({ imageId, humorFlavorId: flavorForBody }),
+    });
+  }
+
+  variants.push({
+    label: "query string + body imageId only",
+    url: `${base}/pipeline/generate-captions?humorFlavorId=${encodeURIComponent(humorFlavorId)}`,
+    body: JSON.stringify({ imageId }),
+  });
+
+  return variants;
 }
 
 /** Pull presigned PUT URL + optional public CDN URL from generate-presigned-url JSON. */
@@ -338,19 +412,7 @@ async function runGenerateCaptionsPhase(input: {
    * can return HTTP 200 with a **default** caption pipeline, so captions ignore your Supabase steps and
    * look “random” (meme / generic) compared to a friend’s app that always sends the flavor id.
    */
-  const flavorForBody = humorFlavorIdForJsonBody(humorFlavorId);
-  const variants: { label: string; url: string; body: string }[] = [
-    {
-      label: "imageId + humorFlavorId JSON body (course shape)",
-      url: `${base}/pipeline/generate-captions`,
-      body: JSON.stringify({ imageId, humorFlavorId: flavorForBody }),
-    },
-    {
-      label: "imageId + humorFlavorId query string",
-      url: `${base}/pipeline/generate-captions?humorFlavorId=${encodeURIComponent(humorFlavorId)}`,
-      body: JSON.stringify({ imageId }),
-    },
-  ];
+  const variants = buildGenerateCaptionsVariants(base, imageId, humorFlavorId);
 
   if (process.env.ALMOSTCRACKD_ALLOW_IMAGE_ID_ONLY_CAPTIONS === "true") {
     variants.push({
@@ -362,15 +424,19 @@ async function runGenerateCaptionsPhase(input: {
 
   let lastStatus = 0;
   let lastRaw = "";
+  /** Default 3: single-shot fails on transient CloudFront 504s; override with env (e.g. 1 = fail fast). */
   const maxAttemptsPerVariant = Math.min(
-    4,
-    Math.max(1, Number(process.env.ALMOSTCRACKD_CAPTION_ATTEMPTS_PER_VARIANT ?? 1)),
+    6,
+    Math.max(1, Number(process.env.ALMOSTCRACKD_CAPTION_ATTEMPTS_PER_VARIANT ?? 3)),
   );
 
   for (const v of variants) {
+    let prevStatus = 0;
     for (let attempt = 1; attempt <= maxAttemptsPerVariant; attempt++) {
       if (attempt > 1) {
-        await sleep(Math.min(1200, 150 * Math.pow(2, attempt - 2)));
+        const gateway = [502, 503, 504].includes(prevStatus);
+        const baseMs = gateway ? 2200 : 650;
+        await sleep(Math.min(14_000, baseMs * Math.pow(1.85, attempt - 2)));
       }
 
       const captionRes = await fetch(v.url, {
@@ -380,8 +446,12 @@ async function runGenerateCaptionsPhase(input: {
       });
       lastStatus = captionRes.status;
       lastRaw = await captionRes.text();
+      prevStatus = captionRes.status;
 
       if (captionRes.ok) {
+        if (process.env.ALMOSTCRACKD_LOG_CAPTION_VARIANT === "true") {
+          console.info(`[Almost Crackd] generate-captions OK via: ${v.label}`);
+        }
         return parseGenerateCaptionsSuccess(lastRaw, input);
       }
 
@@ -408,9 +478,8 @@ async function runGenerateCaptionsPhase(input: {
     ? "\n\n— Almost Crackd returned this 500 (not your app). Tried: query humorFlavorId + imageId body, then JSON body with both ids."
     : "";
 
-  throw new Error(
-    `[Step 4/4 generate-captions] HTTP ${lastStatus}: ${lastRaw}${tail}`,
-  );
+  const detail = formatGenerateCaptionsFailure(lastStatus, lastRaw);
+  throw new Error(`[Step 4/4 generate-captions] HTTP ${lastStatus}: ${detail}${tail}`);
 }
 
 /** Step 3 — returns imageId from Almost Crackd. */

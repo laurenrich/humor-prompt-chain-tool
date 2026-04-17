@@ -6,9 +6,11 @@ import {
   runHumorFlavorPipelineFromImageFile,
   type HumorFlavorPipelineResult,
 } from "@/lib/almostcrackd";
+import { normalizeAlmostCrackdStepPlaceholders } from "@/lib/almostcrackd-placeholders";
 import {
   defaultLlmSystemPrompt,
-  humorFlavorStepFkDefaults,
+  defaultLlmTemperature,
+  humorFlavorStepFkForOrderIndex,
 } from "@/lib/humor-step-defaults";
 import { slugifyFlavorName } from "@/lib/slugify";
 import { revalidatePath } from "next/cache";
@@ -69,6 +71,88 @@ export async function createHumorFlavor(data: {
   return String(row!.id);
 }
 
+/** True if no row uses the slug produced from `proposedName` (same rule as create). */
+export async function isHumorFlavorNameAvailable(proposedName: string): Promise<boolean> {
+  const { supabase } = await requireAdmin();
+  const slug = slugifyFlavorName(proposedName.trim());
+  if (!slug) return false;
+  const { data, error } = await supabase
+    .from("humor_flavors")
+    .select("id")
+    .eq("slug", slug)
+    .maybeSingle();
+  if (error) throw error;
+  return data == null;
+}
+
+/**
+ * Copy a flavor and all `humor_flavor_steps` rows. `newName` becomes a new unique slug via `slugifyFlavorName`.
+ */
+export async function duplicateHumorFlavor(
+  sourceFlavorId: string,
+  newName: string,
+): Promise<string> {
+  const name = newName.trim();
+  if (!name) throw new Error("Enter a name for the duplicated flavor.");
+  if (!(await isHumorFlavorNameAvailable(name))) {
+    throw new Error(
+      "A flavor with that name already exists (same slug after normalizing). Choose a different name.",
+    );
+  }
+
+  const { supabase, user } = await requireAdmin();
+  const { data: source, error: srcErr } = await supabase
+    .from("humor_flavors")
+    .select("id, description")
+    .eq("id", sourceFlavorId)
+    .single();
+  if (srcErr || !source) throw new Error("Source flavor not found.");
+
+  const newId = await createHumorFlavor({
+    name,
+    description: source.description ?? undefined,
+  });
+
+  try {
+    const { data: steps, error: stErr } = await supabase
+      .from("humor_flavor_steps")
+      .select(
+        "order_by, llm_user_prompt, llm_system_prompt, llm_temperature, llm_input_type_id, llm_output_type_id, llm_model_id, humor_flavor_step_type_id",
+      )
+      .eq("humor_flavor_id", sourceFlavorId)
+      .order("order_by", { ascending: true });
+    if (stErr) throw stErr;
+
+    const now = new Date().toISOString();
+    for (const s of steps ?? []) {
+      const row = s as Record<string, unknown>;
+      const { error: insErr } = await supabase.from("humor_flavor_steps").insert({
+        humor_flavor_id: newId,
+        order_by: row.order_by,
+        llm_user_prompt: row.llm_user_prompt,
+        llm_system_prompt: row.llm_system_prompt,
+        llm_temperature: row.llm_temperature,
+        llm_input_type_id: row.llm_input_type_id,
+        llm_output_type_id: row.llm_output_type_id,
+        llm_model_id: row.llm_model_id,
+        humor_flavor_step_type_id: row.humor_flavor_step_type_id,
+        created_by_user_id: user.id,
+        modified_by_user_id: user.id,
+        created_datetime_utc: now,
+        modified_datetime_utc: now,
+      });
+      if (insErr) throw insErr;
+    }
+  } catch (e) {
+    await supabase.from("humor_flavors").delete().eq("id", newId);
+    revalidatePath("/admin");
+    throw e;
+  }
+
+  revalidatePath(`/admin/flavors/${newId}`);
+  return newId;
+}
+
 export async function updateHumorFlavor(
   id: string,
   data: { slug: string; description?: string | null },
@@ -104,12 +188,39 @@ export async function deleteHumorFlavorFromListForm(formData: FormData) {
   redirect("/admin");
 }
 
+/** After reorder/delete, first step must be “image input” FKs; rest “chain” FKs — Almost Crackd keys off these. */
+async function syncHumorFlavorStepPipelineFks(flavorId: string) {
+  const { supabase, user } = await requireAdmin();
+  const { data: steps, error } = await supabase
+    .from("humor_flavor_steps")
+    .select("id")
+    .eq("humor_flavor_id", flavorId)
+    .order("order_by", { ascending: true });
+  if (error) throw error;
+  if (!steps?.length) return;
+  const now = new Date().toISOString();
+  const temp = defaultLlmTemperature();
+  for (let i = 0; i < steps.length; i++) {
+    const fk = humorFlavorStepFkForOrderIndex(i);
+    const { error: ue } = await supabase
+      .from("humor_flavor_steps")
+      .update({
+        ...fk,
+        llm_temperature: temp,
+        modified_by_user_id: user.id,
+        modified_datetime_utc: now,
+      })
+      .eq("id", steps[i].id)
+      .eq("humor_flavor_id", flavorId);
+    if (ue) throw ue;
+  }
+}
+
 export async function createHumorFlavorStep(
   flavorId: string,
   data: { llm_user_prompt: string; llm_system_prompt?: string },
 ) {
   const { supabase, user } = await requireAdmin();
-  const fk = humorFlavorStepFkDefaults();
   const now = new Date().toISOString();
   const { data: maxRow } = await supabase
     .from("humor_flavor_steps")
@@ -120,16 +231,20 @@ export async function createHumorFlavorStep(
     .maybeSingle();
 
   const nextOrder = (maxRow?.order_by ?? 0) + 1;
+  const fk = humorFlavorStepFkForOrderIndex(nextOrder - 1);
+  const temp = defaultLlmTemperature();
 
-  const system =
+  const userPrompt = normalizeAlmostCrackdStepPlaceholders(data.llm_user_prompt);
+  const systemRaw =
     data.llm_system_prompt?.trim() || defaultLlmSystemPrompt();
+  const system = normalizeAlmostCrackdStepPlaceholders(systemRaw);
 
   const { error } = await supabase.from("humor_flavor_steps").insert({
     humor_flavor_id: flavorId,
     order_by: nextOrder,
-    llm_user_prompt: data.llm_user_prompt,
+    llm_user_prompt: userPrompt,
     llm_system_prompt: system,
-    llm_temperature: null,
+    llm_temperature: temp,
     ...fk,
     created_by_user_id: user.id,
     modified_by_user_id: user.id,
@@ -146,12 +261,14 @@ export async function updateHumorFlavorStep(
   data: { llm_user_prompt: string; llm_system_prompt?: string },
 ) {
   const { supabase, user } = await requireAdmin();
-  const system =
+  const systemRaw =
     data.llm_system_prompt?.trim() || defaultLlmSystemPrompt();
+  const system = normalizeAlmostCrackdStepPlaceholders(systemRaw);
+  const userPrompt = normalizeAlmostCrackdStepPlaceholders(data.llm_user_prompt);
   const { error } = await supabase
     .from("humor_flavor_steps")
     .update({
-      llm_user_prompt: data.llm_user_prompt,
+      llm_user_prompt: userPrompt,
       llm_system_prompt: system,
       modified_by_user_id: user.id,
       modified_datetime_utc: new Date().toISOString(),
@@ -190,6 +307,7 @@ export async function deleteHumorFlavorStep(stepId: string, flavorId: string) {
     }
   }
 
+  await syncHumorFlavorStepPipelineFks(flavorId);
   revalidatePath(`/admin/flavors/${flavorId}`);
 }
 
@@ -211,6 +329,7 @@ export async function reorderHumorFlavorSteps(
       .eq("humor_flavor_id", flavorId);
     if (error) throw error;
   }
+  await syncHumorFlavorStepPipelineFks(flavorId);
   revalidatePath(`/admin/flavors/${flavorId}`);
 }
 
@@ -273,21 +392,32 @@ async function getFlavorPipelineContext(flavorId: string): Promise<{
   if (se) throw se;
   if (!steps?.length) throw new Error("Add at least one step first");
 
-  /** API rejects generate-captions if any step has null system prompt — backfill legacy rows. */
+  /** Backfill empty system prompts; fix ${STEP1OUTPUT}-style placeholders (Almost Crackd expects ${step1Output}). */
   const defaultSys = defaultLlmSystemPrompt();
   const now = new Date().toISOString();
   for (const step of steps) {
-    if (step.llm_system_prompt?.trim()) continue;
+    const prevUser = step.llm_user_prompt ?? "";
+    const rawSys = step.llm_system_prompt?.trim();
+    const userNext = normalizeAlmostCrackdStepPlaceholders(prevUser);
+    const sysNext = rawSys
+      ? normalizeAlmostCrackdStepPlaceholders(rawSys)
+      : defaultSys;
+    const shouldUpdate =
+      userNext !== prevUser || !rawSys || sysNext !== rawSys;
+    if (!shouldUpdate) continue;
     const { error: ue } = await supabase
       .from("humor_flavor_steps")
       .update({
-        llm_system_prompt: defaultSys,
+        llm_user_prompt: userNext,
+        llm_system_prompt: sysNext,
         modified_by_user_id: user.id,
         modified_datetime_utc: now,
       })
       .eq("id", step.id);
     if (ue) throw ue;
   }
+
+  await syncHumorFlavorStepPipelineFks(flavorId);
   revalidatePath(`/admin/flavors/${flavorId}`);
 
   const stepOrders = steps.map((s) => s.order_by);

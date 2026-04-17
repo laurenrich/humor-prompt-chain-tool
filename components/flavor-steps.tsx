@@ -6,6 +6,10 @@ import {
   reorderHumorFlavorSteps,
   updateHumorFlavorStep,
 } from "@/app/actions/humor";
+import {
+  findNonStandardDollarPlaceholders,
+  stepPromptHasSelfReferentialOutput,
+} from "@/lib/almostcrackd-placeholders";
 import type { HumorFlavorStep } from "@/types/humor";
 import {
   DndContext,
@@ -39,11 +43,20 @@ type Props = {
   initialSteps: HumorFlavorStep[];
 };
 
+/** Card title: uppercase for scanability, but keep `${step1Output}` / `{{previous}}` casing (Almost Crackd tokens). */
 function stepHeadline(prompt: string | null | undefined, order: number): string {
   const raw = (prompt ?? "").trim().split(/\n/)[0] ?? "";
   if (!raw) return `Step ${order}`;
-  const one = raw.length > 52 ? `${raw.slice(0, 49)}…` : raw;
-  return one.toUpperCase();
+  const preserved: string[] = [];
+  const masked = raw.replace(/\$\{[^}]+\}|\{\{[^}]+\}\}/g, (m) => {
+    preserved.push(m);
+    return `\0${preserved.length - 1}\0`;
+  });
+  let out = masked.toUpperCase();
+  preserved.forEach((ph, i) => {
+    out = out.replace(`\0${i}\0`, ph);
+  });
+  return out.length > 52 ? `${out.slice(0, 49)}…` : out;
 }
 
 type StepRowProps = {
@@ -102,6 +115,12 @@ const FlavorStepRow = forwardRef<HTMLLIElement, StepRowProps>(function FlavorSte
   }
 
   const headline = stepHeadline(step.llm_user_prompt, step.order_by);
+  const promptForLint = editing ? text : (step.llm_user_prompt ?? "");
+  const selfRefStepOutput = stepPromptHasSelfReferentialOutput(
+    promptForLint,
+    step.order_by,
+  );
+  const oddDollarTokens = findNonStandardDollarPlaceholders(promptForLint);
 
   return (
     <li ref={ref} style={style} className="relative flex gap-4 pb-10 last:pb-0">
@@ -122,10 +141,40 @@ const FlavorStepRow = forwardRef<HTMLLIElement, StepRowProps>(function FlavorSte
           <div className="flex shrink-0 items-center gap-1">{dragHandle}</div>
         </div>
         <p className="mb-3 text-[10px] leading-relaxed text-[var(--muted)]">
-          Placeholders:{" "}
+          <span className="font-medium text-[var(--foreground)]">If this prompt uses tokens:</span>{" "}
           <code className="rounded bg-[var(--muted-bg)] px-1">{"{{previous}}"}</code>,{" "}
-          <code className="rounded bg-[var(--muted-bg)] px-1">{"${step1Output}"}</code>, …
+          <code className="rounded bg-[var(--muted-bg)] px-1">{"${step1Output}"}</code>,{" "}
+          <code className="rounded bg-[var(--muted-bg)] px-1">{"${step2Output}"}</code>, … — use{" "}
+          <code className="rounded bg-[var(--muted-bg)] px-1">{"${step1Output}"}</code>
+          <span className="text-[var(--muted)]">-style casing, not</span>{" "}
+          <code className="rounded bg-[var(--muted-bg)] px-1">{"${STEP1OUTPUT}"}</code>
+          <span className="text-[var(--muted)]">
+            . Plain-text-only prompts (no tokens) are fine too; the app does not require them.
+          </span>
         </p>
+        {selfRefStepOutput ? (
+          <p className="mb-3 rounded-md border border-amber-400/80 bg-amber-50 px-2.5 py-2 text-[11px] leading-snug text-amber-950 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-100">
+            <span className="font-medium">Self-reference:</span> this step mentions{" "}
+            <code className="rounded bg-amber-100/90 px-1 dark:bg-amber-900/50">
+              {"${step"}
+              {step.order_by}
+              {"Output}"}
+            </code>{" "}
+            in its <em>own</em> prompt—that output does not exist until this step finishes. Step 1 should not
+            use <code className="rounded bg-amber-100/90 px-1 dark:bg-amber-900/50">{"${step1Output}"}</code>.
+            Step 2 should pull step 1’s text with{" "}
+            <code className="rounded bg-amber-100/90 px-1 dark:bg-amber-900/50">{"${step1Output}"}</code>, not{" "}
+            <code className="rounded bg-amber-100/90 px-1 dark:bg-amber-900/50">{"${step2Output}"}</code>, for
+            the first model’s result.
+          </p>
+        ) : null}
+        {oddDollarTokens.length > 0 ? (
+          <p className="mb-3 rounded-md border border-[var(--border)] bg-[var(--background)] px-2.5 py-2 text-[11px] leading-snug text-[var(--muted)]">
+            <span className="font-medium text-[var(--foreground)]">Non-standard tokens:</span>{" "}
+            {oddDollarTokens.join(", ")} — not documented for Almost Crackd; they may appear literally in the
+            model input and break the chain.
+          </p>
+        ) : null}
         {editing ? (
             <div className="space-y-3">
               <div>
@@ -378,7 +427,7 @@ export function FlavorSteps({ flavorId, initialSteps }: Props) {
         value={newPrompt}
         onChange={(e) => setNewPrompt(e.target.value)}
         rows={4}
-        placeholder="Step 1: image task. Later steps: {{previous}} and/or ${step1Output}, ${step2Output}, … per Almost Crackd."
+        placeholder="Plain text or tokens — both OK. Example: only prose, or e.g. Context: ${step1Output} then your instructions."
         className="w-full rounded-md border border-[var(--border)] bg-[var(--background)] p-2 font-mono text-sm"
       />
       <label className="mb-1 mt-2 block text-xs text-[var(--muted)]">
@@ -408,6 +457,15 @@ export function FlavorSteps({ flavorId, initialSteps }: Props) {
         <strong className="font-medium text-[var(--foreground)]">Run order:</strong> top → bottom.
         Step 1 runs first, then 2, then 3. Drag ⋮⋮ to reorder; that updates what Almost Crackd runs when you
         test.
+      </p>
+      <p className="text-xs text-[var(--muted)]">
+        <strong className="font-medium text-[var(--foreground)]">Authoring:</strong> both patterns are supported—
+        <span className="text-[var(--foreground)]"> plain instructions only</span> on every step (no{" "}
+        <code className="rounded bg-[var(--muted-bg)] px-1 text-[10px]">{"${stepNOutput}"}</code>), or{" "}
+        <span className="text-[var(--foreground)]">explicit chaining</span> where you put{" "}
+        <code className="rounded bg-[var(--muted-bg)] px-1 text-[10px]">{"{{previous}}"}</code> /{" "}
+        <code className="rounded bg-[var(--muted-bg)] px-1 text-[10px]">{"${step1Output}"}</code> in the text
+        where you need prior output inlined. Same flavor can mix both (e.g. step 2 plain, step 3 with tokens).
       </p>
       {!dndReady ? (
         <ul className="list-none p-0">
